@@ -1,0 +1,22 @@
+# Build outputs
+.gradle/
+build/
+app/build/
+*/build/
+
+# Local config
+local.properties
+*.properties
+
+# IDE
+.idea/
+*.iml
+
+# Keystores (never commit)
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+desktop.ini
+Thumbs.db
