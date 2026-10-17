@@ -60,4 +60,14 @@ class ContactRepository(private val contactDao: ContactDao) {
             contactDao.getAllActiveContactsSync().map { it.phoneNumber }
         }
     }
+
+    suspend fun deleteAllContacts() {
+        withContext(Dispatchers.IO) {
+            try {
+                contactDao.deleteAll()
+            } catch (e: Exception) {
+                android.util.Log.e("ContactRepository", "Error deleting all contacts", e)
+            }
+        }
+    }
 }

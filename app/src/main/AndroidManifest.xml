@@ -2,54 +2,54 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- SMS permissions for OTP and SOS -->
+    <!-- SMS permissions for SOS alerts -->
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.CALL_PHONE" />
-    
-    <!-- Foreground service + notifications for receiver-side alert -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Special use foreground service for emergency alerts (Android 14+) -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    
-    <!-- Notification permissions (Android 13+) -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    
-    <!-- Full screen intent for emergency alerts (Android 14+) -->
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-    
-    <!-- Vibration permission for SOS alerts -->
-    <uses-permission android:name="android.permission.VIBRATE" />
-    
-    <!-- Audio permissions for emergency sounds -->
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    
-    <!-- Wake lock to keep device awake during emergency -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    
-    <!-- Schedule exact alarms (Android 12+) for reliable timing -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    
-    <!-- Request battery optimization exemption -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    
-    <!-- Boot receiver for direct boot mode -->
+    <!-- READ_CALL_LOG: needed for Phase 5 incoming-call "I am safe" detection -->
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- RECEIVE_BOOT_COMPLETED: needed to restart protection service after reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Location permissions for SOS GPS coordinates -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Background location: needed for periodic SOS follow-up updates -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- Foreground service types -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- Hardware / system permissions -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- COMPLIANCE FIX: CALL_PHONE removed — was never used, instant Play Store rejection -->
+    <!-- COMPLIANCE FIX: SCHEDULE_EXACT_ALARM removed — AlarmManager not used, causes rejection -->
 
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
-
     <uses-feature
         android:name="android.hardware.telephony.sms"
         android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
 
+    <!-- Signature-level permission for internal SOS broadcasts -->
     <permission
         android:name="com.womensafety.app.permission.SOS_TRIGGER"
         android:protectionLevel="signature" />
 
+    <!-- SEC-03 FIX: allowBackup="false" prevents plaintext DB extraction via adb backup -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@drawable/logo"
         android:label="@string/app_name"
         android:roundIcon="@drawable/logo"
@@ -84,29 +84,50 @@
             </intent-filter>
         </activity>
 
-        <!-- SOS Broadcast Receiver for sending alerts -->
+        <!-- Internal SOS broadcast receiver (sent by notification action) -->
         <receiver
             android:name=".receiver.SOSBroadcastReceiver"
-            android:exported="true"
+            android:exported="false"
             android:permission="com.womensafety.app.permission.SOS_TRIGGER">
             <intent-filter>
                 <action android:name="com.womensafety.app.SOS_TRIGGER" />
             </intent-filter>
         </receiver>
-        
-        <!-- SOS Alert Receiver for receiving emergency messages -->
+
+        <!-- SOS Alert Receiver: detects incoming [NSOS] SMS.
+             BUG-04 FIX: directBootAware="true" REMOVED — accesses CE database,
+             would crash before device is unlocked. -->
         <receiver
             android:name=".receiver.SOSAlertReceiver"
             android:exported="true"
             android:enabled="true"
-            android:directBootAware="true"
             android:permission="android.permission.BROADCAST_SMS">
             <intent-filter android:priority="1000">
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
 
-        <!-- Foreground service to play buzzer + vibration on receiver device -->
+        <!-- Boot receiver: restarts protection service after reboot -->
+        <receiver
+            android:name=".receiver.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Protection foreground service (monitors SMS/calls in background) -->
+        <service
+            android:name=".service.ProtectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Women safety monitoring: background protection service" />
+        </service>
+
+        <!-- Emergency alert service (buzzer + vibration on [NSOS] receipt) -->
         <service
             android:name=".receiver.SOSAlertService"
             android:exported="false"
@@ -116,15 +137,7 @@
                 android:value="Emergency alert service for safety notifications" />
         </service>
 
-        <!-- Foreground service to forward IoT SOS alerts to emergency contacts -->
-        <service
-            android:name=".receiver.IoTSOSForwardingService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="IoT emergency alert forwarding service" />
-        </service>
+        <!-- IoTSOSForwardingService REMOVED: IoT feature removed in Phase 1 -->
 
     </application>
 

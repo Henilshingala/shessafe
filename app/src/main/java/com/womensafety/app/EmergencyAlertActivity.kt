@@ -1,5 +1,6 @@
 package com.womensafety.app
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -20,9 +21,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.womensafety.app.receiver.SOSAlertService
 
+/**
+ * Full-screen activity shown over lock screen when an emergency alert arrives.
+ *
+ * BUG-02 FIX: Does NOT instantiate SOSAlertManager or play audio here.
+ * The SOSAlertService already handles audio and vibration on the ALARM stream.
+ * This activity only provides the full-screen visual UI and the STOP button.
+ */
 class EmergencyAlertActivity : ComponentActivity() {
-
-    private lateinit var alertManager: SOSAlertManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,13 +40,10 @@ class EmergencyAlertActivity : ComponentActivity() {
             @Suppress("DEPRECATION")
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
             )
         }
-
-        alertManager = SOSAlertManager(this)
-        alertManager.playEmergencyAlert(enableSound = true, enableVibration = true)
 
         setContent {
             Surface(modifier = Modifier.fillMaxSize(), color = Color.Red) {
@@ -51,21 +54,13 @@ class EmergencyAlertActivity : ComponentActivity() {
 
     private fun stopAlertAndFinish() {
         try {
-            alertManager.stopAlert()
-            alertManager.cleanup()
-        } catch (e: Exception) {
-            android.util.Log.e("EmergencyAlertActivity", "Error stopping alert", e)
-        }
-        
-        try {
-            val stopIntent = android.content.Intent(this, SOSAlertService::class.java).apply {
+            val stopIntent = Intent(this, SOSAlertService::class.java).apply {
                 action = SOSAlertService.ACTION_STOP
             }
             startService(stopIntent)
         } catch (e: Exception) {
             android.util.Log.w("EmergencyAlertActivity", "Failed to stop service", e)
         }
-        
         finishAndRemoveTask()
     }
 }
@@ -94,7 +89,10 @@ private fun EmergencyAlertScreen(onStop: () -> Unit) {
             )
             Button(
                 onClick = onStop,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Red),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = Color.Red
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)

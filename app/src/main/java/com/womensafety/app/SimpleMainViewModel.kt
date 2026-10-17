@@ -1,116 +1,185 @@
 package com.womensafety.app
 
 import android.app.Application
-import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.womensafety.app.auth.OtpProvider
+import com.womensafety.app.auth.OtpResult
+import com.womensafety.app.auth.StubOtpProvider
 import com.womensafety.app.data.ContactRepository
-import com.womensafety.app.data.SimpleOTPManager
+import com.womensafety.app.data.SecurePreferences
 import com.womensafety.app.data.database.AppDatabase
 import com.womensafety.app.data.models.EmergencyContact
+import com.womensafety.app.util.PhoneUtil
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class SimpleOTPState(
-    val isActive: Boolean = false,
-    val phoneNumber: String = "",
+// ── OTP State ─────────────────────────────────────────────────────────────────
+
+enum class OtpStep { ENTER_PHONE, ENTER_OTP, DONE }
+
+data class LoginState(
+    val step: OtpStep = OtpStep.ENTER_PHONE,
+    val phoneNumber: String = "",        // E.164 format
+    val verificationId: String = "",
     val isLoading: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val resendCountdownSeconds: Int = 0  // 0 = can resend
 )
 
-data class SimpleSettingsState(
-    val sosDelay: Int = 5,
-    val enableSound: Boolean = true,
-    val enableVibration: Boolean = true,
+// ── Settings State ────────────────────────────────────────────────────────────
+
+data class SettingsState(
     val userPhoneNumber: String = "",
-    val iotSimNumber: String = "",
-    val manualSosDelay: Int = 10,
-    val userRole: String = "" // "sender" or "receiver"
+    val manualSosDelay: Int = 5,
+    val iAmSafeEnabled: Boolean = true
 )
 
 class SimpleMainViewModel(application: Application) : AndroidViewModel(application) {
+
     private val database = AppDatabase.getDatabase(application)
     private val repository = ContactRepository(database.contactDao())
-    private val otpManager = SimpleOTPManager(application)
-    private val sosManager = SOSManager(application)
-    private val prefs = application.getSharedPreferences("women_safety_prefs", Context.MODE_PRIVATE)
-    
+    private val otpProvider: OtpProvider = StubOtpProvider()
+
+    // ── Login ─────────────────────────────────────────────────────────────────
+
+    private val _loginState = MutableStateFlow(LoginState())
+    val loginState: StateFlow<LoginState> = _loginState.asStateFlow()
+
+    private var resendTimerJob: Job? = null
+
+    /** True if the user has already completed login (phone verified + flag stored). */
+    val isLoggedIn: Boolean
+        get() = SecurePreferences.isLoggedIn(getApplication())
+
+    // ── Contacts / Guardians ───────────────────────────────────────────────────
+
     private val _contacts = MutableStateFlow<List<EmergencyContact>>(emptyList())
     val contacts: StateFlow<List<EmergencyContact>> = _contacts.asStateFlow()
-    
-    private val _otpState = MutableStateFlow(SimpleOTPState())
-    val otpState: StateFlow<SimpleOTPState> = _otpState.asStateFlow()
-    
-    private val _settingsState = MutableStateFlow(SimpleSettingsState())
-    val settingsState: StateFlow<SimpleSettingsState> = _settingsState.asStateFlow()
-    
-    private var pendingContact: PendingContact? = null
-    
+
+    // ── Settings ───────────────────────────────────────────────────────────────
+
+    private val _settingsState = MutableStateFlow(SettingsState())
+    val settingsState: StateFlow<SettingsState> = _settingsState.asStateFlow()
+
+    // ── SOS Status ─────────────────────────────────────────────────────────────
+
+    sealed class SosStatus {
+        object Idle : SosStatus()
+        data class Countdown(val secondsLeft: Int) : SosStatus()
+        data class Sending(val sentCount: Int, val totalCount: Int) : SosStatus()
+        data class Done(val sentCount: Int, val totalCount: Int) : SosStatus()
+        data class Failed(val failedCount: Int) : SosStatus()
+    }
+
+    private val _sosStatus = MutableStateFlow<SosStatus>(SosStatus.Idle)
+    val sosStatus: StateFlow<SosStatus> = _sosStatus.asStateFlow()
+
     init {
         loadContacts()
         loadSettings()
     }
-    
-    // Validate that phone number is not already registered with a different role
-    fun validatePhoneNumberForRole(phoneNumber: String, role: String): Pair<Boolean, String> {
-        val cleanNumber = phoneNumber.filter { it.isDigit() }.takeLast(10)
-        
-        // Get all registered phone numbers from SharedPreferences
-        val registeredSenders = prefs.getStringSet("registered_senders", setOf()) ?: setOf()
-        val registeredReceivers = prefs.getStringSet("registered_receivers", setOf()) ?: setOf()
-        
-        return when {
-            role == "sender" && registeredReceivers.contains(cleanNumber) -> {
-                Pair(false, "This phone number is already registered as a receiver. Cannot use same number for sender.")
-            }
-            role == "receiver" && registeredSenders.contains(cleanNumber) -> {
-                Pair(false, "This phone number is already registered as a sender. Cannot use same number for receiver.")
-            }
-            else -> Pair(true, "")
+
+    // ── Login methods ─────────────────────────────────────────────────────────
+
+    fun sendOtp(rawPhoneNumber: String) {
+        val e164 = PhoneUtil.toE164(rawPhoneNumber)
+        if (e164 == null) {
+            _loginState.value = _loginState.value.copy(
+                errorMessage = "Please enter a valid phone number with country code."
+            )
+            return
         }
-    }
-    
-    // Register phone number with role
-    fun registerPhoneNumberWithRole(phoneNumber: String, role: String) {
-        val cleanNumber = phoneNumber.filter { it.isDigit() }.takeLast(10)
-        
-        if (role == "sender") {
-            val senders = prefs.getStringSet("registered_senders", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-            senders.add(cleanNumber)
-            prefs.edit().putStringSet("registered_senders", senders).apply()
-        } else if (role == "receiver") {
-            val receivers = prefs.getStringSet("registered_receivers", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-            receivers.add(cleanNumber)
-            prefs.edit().putStringSet("registered_receivers", receivers).apply()
-        }
-    }
-    
-    private fun loadSettings() {
-        val delay = prefs.getInt("sos_delay", 5)
-        val sound = prefs.getBoolean("enable_sound", true)
-        val vibration = prefs.getBoolean("enable_vibration", true)
-        // Load sensitive data from SecurePreferences
-        val phone = com.womensafety.app.data.SecurePreferences.getUserPhoneNumber(getApplication())
-        val iotSimNumber = com.womensafety.app.data.SecurePreferences.getIotSimNumber(getApplication())
-        val manualSosDelay = com.womensafety.app.data.SecurePreferences.getManualSosDelay(getApplication())
-        val role = com.womensafety.app.data.SecurePreferences.getUserRole(getApplication())
-        
-        _settingsState.value = SimpleSettingsState(
-            sosDelay = delay,
-            enableSound = sound,
-            enableVibration = vibration,
-            userPhoneNumber = phone,
-            iotSimNumber = iotSimNumber,
-            manualSosDelay = manualSosDelay,
-            userRole = role
+        _loginState.value = LoginState(
+            step = OtpStep.ENTER_PHONE,
+            phoneNumber = e164,
+            isLoading = true
         )
+        viewModelScope.launch {
+            when (val result = otpProvider.sendOtp(e164)) {
+                is OtpResult.Success -> {
+                    // Store verificationId in SecurePreferences for resilience
+                    SecurePreferences.setOtpVerificationId(getApplication(), result.verificationId)
+                    _loginState.value = LoginState(
+                        step = OtpStep.ENTER_OTP,
+                        phoneNumber = e164,
+                        verificationId = result.verificationId,
+                        resendCountdownSeconds = 30
+                    )
+                    startResendTimer()
+                }
+                is OtpResult.Error -> {
+                    _loginState.value = _loginState.value.copy(
+                        isLoading = false,
+                        errorMessage = result.message
+                    )
+                }
+            }
+        }
     }
-    
+
+    fun verifyOtp(otp: String) {
+        val state = _loginState.value
+        _loginState.value = state.copy(isLoading = true, errorMessage = null)
+        viewModelScope.launch {
+            when (val result = otpProvider.verifyOtp(state.verificationId, otp)) {
+                is OtpResult.Success -> {
+                    SecurePreferences.setUserPhoneNumber(getApplication(), state.phoneNumber)
+                    SecurePreferences.setLoggedIn(getApplication(), true)
+                    _loginState.value = LoginState(step = OtpStep.DONE)
+                    _settingsState.value = _settingsState.value.copy(
+                        userPhoneNumber = state.phoneNumber
+                    )
+                }
+                is OtpResult.Error -> {
+                    _loginState.value = state.copy(
+                        isLoading = false,
+                        errorMessage = result.message
+                    )
+                }
+            }
+        }
+    }
+
+    fun resendOtp() {
+        if (_loginState.value.resendCountdownSeconds > 0) return
+        sendOtp(_loginState.value.phoneNumber)
+    }
+
+    private fun startResendTimer() {
+        resendTimerJob?.cancel()
+        resendTimerJob = viewModelScope.launch {
+            var remaining = 30
+            while (remaining > 0) {
+                _loginState.value = _loginState.value.copy(resendCountdownSeconds = remaining)
+                delay(1000)
+                remaining--
+            }
+            _loginState.value = _loginState.value.copy(resendCountdownSeconds = 0)
+        }
+    }
+
+    fun logout() {
+        viewModelScope.launch {
+            // Clear all guardians
+            repository.deleteAllContacts()
+            // Clear session
+            SecurePreferences.clearSession(getApplication())
+            // Reset state
+            _loginState.value = LoginState()
+            _contacts.value = emptyList()
+        }
+    }
+
+    // ── Guardian / contact methods ────────────────────────────────────────────
+
     private fun loadContacts() {
         viewModelScope.launch {
             repository.getAllActiveContacts().collect { contactList ->
@@ -118,190 +187,105 @@ class SimpleMainViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
     }
-    
-    fun startOTPVerification(phoneNumber: String, name: String, relationship: String) {
-        pendingContact = PendingContact(name, phoneNumber, relationship)
-        
-        _otpState.value = SimpleOTPState(
-            isActive = true,
-            phoneNumber = phoneNumber,
-            isLoading = true
-        )
-        
-        viewModelScope.launch {
-            val otp = otpManager.generateAndSendOTP(phoneNumber)
-            
-            if (otp.isNotEmpty()) {
-                _otpState.value = _otpState.value.copy(
-                    isLoading = false,
-                    errorMessage = null
-                )
-                Log.d("SimpleViewModel", "OTP sent successfully")
-            } else {
-                _otpState.value = _otpState.value.copy(
-                    isLoading = false,
-                    errorMessage = "Failed to send OTP. Please check your number and try again."
-                )
-            }
-        }
-    }
-    
-    fun verifyOTP(enteredOTP: String) {
-        val currentState = _otpState.value
-        
-        _otpState.value = currentState.copy(isLoading = true)
-        
-        viewModelScope.launch {
-            if (otpManager.verifyOTP(enteredOTP, currentState.phoneNumber)) {
-                Log.d("SimpleViewModel", "OTP verified successfully")
-                
-                // Add the contact
-                pendingContact?.let { contact ->
-                    addContact(contact.name, contact.phoneNumber, contact.relationship)
-                }
-                
-                cancelOTPVerification()
-            } else {
-                Log.d("SimpleViewModel", "OTP verification failed")
-                _otpState.value = currentState.copy(
-                    isLoading = false,
-                    errorMessage = "Invalid OTP. Please try again."
-                )
-            }
-        }
-    }
-    
-    fun resendOTP() {
-        val phoneNumber = _otpState.value.phoneNumber
-        val name = pendingContact?.name ?: ""
-        val relationship = pendingContact?.relationship ?: ""
-        
-        Log.d("SimpleViewModel", "Resending OTP")
-        startOTPVerification(phoneNumber, name, relationship)
-    }
-    
-    fun cancelOTPVerification() {
-        _otpState.value = SimpleOTPState()
-        pendingContact = null
-    }
-    
-    private suspend fun addContact(name: String, phone: String, relationship: String) {
+
+    /**
+     * Add a guardian. Returns an error string if validation fails, null on success.
+     */
+    suspend fun addGuardian(name: String, rawPhone: String): String? {
+        val userPhone = SecurePreferences.getUserPhoneNumber(getApplication())
+        val e164 = PhoneUtil.toE164(rawPhone)
+            ?: return "Invalid phone number. Please include country code."
+
+        if (PhoneUtil.isSameNumber(e164, userPhone))
+            return "You cannot add your own number as a guardian."
+
+        if (_contacts.value.size >= 5)
+            return "You can add at most 5 guardians."
+
+        val duplicate = _contacts.value.any { PhoneUtil.isSameNumber(e164, it.phoneNumber) }
+        if (duplicate)
+            return "This number is already added as a guardian."
+
         val contact = EmergencyContact(
-            name = name,
-            phoneNumber = phone,
-            relationship = relationship
+            name = name.trim(),
+            phoneNumber = e164,
+            relationship = "Guardian"
         )
         repository.insertContact(contact)
+        return null
     }
-    
-    fun updateContact(contact: EmergencyContact) {
-        viewModelScope.launch {
-            repository.updateContact(contact)
-        }
-    }
-    
+
     fun deleteContact(contact: EmergencyContact) {
-        viewModelScope.launch {
-            repository.deleteContact(contact)
-        }
+        viewModelScope.launch { repository.deleteContact(contact) }
     }
-    
-    fun triggerSOS(): Boolean {
+
+    fun updateContact(contact: EmergencyContact) {
+        viewModelScope.launch { repository.updateContact(contact) }
+    }
+
+    // ── SOS methods ────────────────────────────────────────────────────────────
+
+    /**
+     * Trigger SOS with optional delay. Shows countdown, then dispatches SMS.
+     * BUG-05 FIX: SosStatus only moves to Done/Sent AFTER radio confirms delivery.
+     */
+    fun triggerSOS() {
         val currentContacts = _contacts.value
-        return if (currentContacts.isNotEmpty()) {
-            viewModelScope.launch {
-                try {
-                    val settings = _settingsState.value
-                    if (settings.manualSosDelay > 0) {
-                        kotlinx.coroutines.delay(settings.manualSosDelay * 1000L)
-                    }
-                    
-                    val success = sosManager.sendSOSSAlerts(
-                        contacts = currentContacts, 
-                        senderPhoneNumber = settings.userPhoneNumber
-                    )
-                    Log.d("SimpleViewModel", "SOS triggered with ${settings.manualSosDelay}s delay: $success")
-                } catch (e: Exception) {
-                    Log.e("SimpleViewModel", "Error triggering SOS", e)
+        if (currentContacts.isEmpty()) return
+
+        viewModelScope.launch {
+            val delaySeconds = _settingsState.value.manualSosDelay
+            if (delaySeconds > 0) {
+                var remaining = delaySeconds
+                while (remaining > 0) {
+                    _sosStatus.value = SosStatus.Countdown(remaining)
+                    delay(1000)
+                    remaining--
                 }
             }
-            true
-        } else {
-            Log.d("SimpleViewModel", "No contacts available for SOS")
-            false
+
+            _sosStatus.value = SosStatus.Sending(0, currentContacts.size)
+            val sosManager = com.womensafety.app.SOSManager(getApplication())
+            sosManager.sendSosAlerts(
+                contacts = currentContacts,
+                senderPhoneNumber = _settingsState.value.userPhoneNumber,
+                onProgress = { sent, total ->
+                    _sosStatus.value = SosStatus.Sending(sent, total)
+                },
+                onComplete = { sent, total ->
+                    _sosStatus.value = if (sent == 0) SosStatus.Failed(total)
+                                       else SosStatus.Done(sent, total)
+                }
+            )
         }
     }
 
-    // Sender device must remain silent; keep this as a no-op for clarity
-    private fun startLocalEmergencyAlert() { }
-    
-    // Settings functions
-    fun updateSosDelay(delay: Int) {
-        prefs.edit().putInt("sos_delay", delay).apply()
-        _settingsState.value = _settingsState.value.copy(sosDelay = delay)
-        Log.d("SimpleViewModel", "SOS delay updated to: $delay seconds")
-    }
-    
-    fun updateSoundSetting(enabled: Boolean) {
-        prefs.edit().putBoolean("enable_sound", enabled).apply()
-        _settingsState.value = _settingsState.value.copy(enableSound = enabled)
-        Log.d("SimpleViewModel", "Sound setting updated: $enabled")
-    }
-    
-    fun updateVibrationSetting(enabled: Boolean) {
-        prefs.edit().putBoolean("enable_vibration", enabled).apply()
-        _settingsState.value = _settingsState.value.copy(enableVibration = enabled)
-        Log.d("SimpleViewModel", "Vibration setting updated: $enabled")
-    }
-    
-    fun updateUserPhoneNumber(number: String) {
-        com.womensafety.app.data.SecurePreferences.setUserPhoneNumber(getApplication(), number)
-        _settingsState.value = _settingsState.value.copy(userPhoneNumber = number)
-        Log.d("SimpleViewModel", "User phone number updated (encrypted)")
+    fun cancelSOS() {
+        _sosStatus.value = SosStatus.Idle
     }
 
-    fun updateIotSimNumber(number: String) {
-        com.womensafety.app.data.SecurePreferences.setIotSimNumber(getApplication(), number)
-        _settingsState.value = _settingsState.value.copy(iotSimNumber = number)
-        Log.d("SimpleViewModel", "IoT SIM number updated (encrypted): '$number'")
+    // ── Settings ───────────────────────────────────────────────────────────────
+
+    private fun loadSettings() {
+        val phone = SecurePreferences.getUserPhoneNumber(getApplication())
+        val delay = SecurePreferences.getManualSosDelay(getApplication())
+        val iAmSafe = SecurePreferences.isIAmSafeEnabled(getApplication())
+        _settingsState.value = SettingsState(
+            userPhoneNumber = phone,
+            manualSosDelay = delay,
+            iAmSafeEnabled = iAmSafe
+        )
     }
 
     fun updateManualSosDelay(delay: Int) {
-        com.womensafety.app.data.SecurePreferences.setManualSosDelay(getApplication(), delay)
+        SecurePreferences.setManualSosDelay(getApplication(), delay)
         _settingsState.value = _settingsState.value.copy(manualSosDelay = delay)
-        Log.d("SimpleViewModel", "Manual SOS delay updated to: $delay seconds (encrypted)")
     }
 
-    fun setUserRole(role: String) {
-        com.womensafety.app.data.SecurePreferences.setUserRole(getApplication(), role)
-        _settingsState.value = _settingsState.value.copy(userRole = role)
-        Log.d("SimpleViewModel", "User role set to: $role (encrypted)")
+    fun updateIAmSafeEnabled(enabled: Boolean) {
+        SecurePreferences.setIAmSafeEnabled(getApplication(), enabled)
+        _settingsState.value = _settingsState.value.copy(iAmSafeEnabled = enabled)
     }
-
-    fun isOnboardingComplete(): Boolean {
-        val role = _settingsState.value.userRole
-        val phone = _settingsState.value.userPhoneNumber
-        
-        if (role.isEmpty()) return false
-        if (phone.isEmpty()) return false
-        
-        return if (role == "sender") {
-            _settingsState.value.iotSimNumber.isNotEmpty()
-        } else {
-            true
-        }
-    }
-    
-    override fun onCleared() {
-        super.onCleared()
-        // Save settings on clear just in case, though we save on update now
-    }
-    
-    data class PendingContact(
-        val name: String,
-        val phoneNumber: String,
-        val relationship: String
-    )
 }
 
 class SimpleMainViewModelFactory(private val application: Application) : ViewModelProvider.Factory {

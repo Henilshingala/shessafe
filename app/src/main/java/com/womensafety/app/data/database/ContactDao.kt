@@ -26,4 +26,7 @@ interface ContactDao {
 
     @Query("UPDATE emergency_contacts SET isActive = :isActive WHERE id = :id")
     suspend fun updateContactStatus(id: Long, isActive: Boolean)
+
+    @Query("DELETE FROM emergency_contacts")
+    suspend fun deleteAll()
 }

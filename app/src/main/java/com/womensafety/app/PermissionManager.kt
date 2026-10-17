@@ -259,7 +259,10 @@ class PermissionManager(private val activity: ComponentActivity) {
             val permissions = mutableListOf(
                 Manifest.permission.SEND_SMS,
                 Manifest.permission.RECEIVE_SMS,
-                Manifest.permission.CALL_PHONE,
+                Manifest.permission.READ_CALL_LOG,
+                Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.VIBRATE,
                 Manifest.permission.MODIFY_AUDIO_SETTINGS
             )
