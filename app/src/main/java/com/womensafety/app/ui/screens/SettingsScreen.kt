@@ -8,7 +8,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,6 +25,7 @@ fun SettingsScreen(
     onManualSosDelayChange: (Int) -> Unit = {},
     iAmSafeEnabled: Boolean = true,
     onIAmSafeEnabledChange: (Boolean) -> Unit = {},
+    onRecheckSetup: () -> Unit = {},
     onLogout: () -> Unit = {}
 ) {
     var localDelay by remember { mutableStateOf(manualSosDelay) }
@@ -177,6 +179,17 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Re-check setup button
+            OutlinedButton(
+                onClick = onRecheckSetup,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(Icons.Default.Settings, null, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Re-check Setup & Permissions", style = MaterialTheme.typography.labelLarge)
+            }
+
             // Logout button
             Button(
                 onClick = { showLogoutDialog = true },
@@ -187,7 +200,7 @@ fun SettingsScreen(
                 ),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Icon(Icons.Default.Logout, null, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.ExitToApp, null, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Logout", style = MaterialTheme.typography.labelLarge)
             }

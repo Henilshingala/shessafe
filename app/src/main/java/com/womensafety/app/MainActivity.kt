@@ -31,7 +31,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.womensafety.app.data.SecurePreferences
 import com.womensafety.app.data.models.EmergencyContact
+import com.womensafety.app.service.ProtectionService
 import com.womensafety.app.ui.screens.GuardiansScreen
+import com.womensafety.app.ui.screens.OemSetupScreen
+import com.womensafety.app.ui.screens.PermissionsChecklistScreen
 import com.womensafety.app.ui.screens.SettingsScreen
 import com.womensafety.app.ui.theme.WomenSafetyAppTheme
 import com.womensafety.app.util.PhoneUtil
@@ -68,28 +71,74 @@ fun NirbhayaApp(viewModel: SimpleMainViewModel) {
         mutableStateOf(SecurePreferences.isLoggedIn(context))
     }
 
+    var showPermissionsChecklist by remember {
+        mutableStateOf(!SecurePreferences.isPermissionsChecklistComplete(context))
+    }
+
+    var showOemSetup by remember {
+        mutableStateOf(false)
+    }
+
+    // Start persistent ProtectionService when user is logged in
+    LaunchedEffect(isLoggedIn) {
+        if (isLoggedIn) {
+            ProtectionService.start(context)
+        }
+    }
+
     // React to successful login
     LaunchedEffect(loginState.step) {
         if (loginState.step == OtpStep.DONE) {
             isLoggedIn = true
+            ProtectionService.start(context)
         }
     }
 
-    if (!isLoggedIn) {
-        LoginFlow(
-            viewModel = viewModel,
-            loginState = loginState
-        )
-    } else {
-        AppContent(
-            viewModel = viewModel,
-            contacts = contacts,
-            settingsState = settingsState,
-            onLogout = {
-                viewModel.logout()
-                isLoggedIn = false
-            }
-        )
+    when {
+        showPermissionsChecklist -> {
+            PermissionsChecklistScreen(
+                onAllCriticalGranted = {
+                    SecurePreferences.setPermissionsChecklistComplete(context, true)
+                    showPermissionsChecklist = false
+                    // If OEM setup not shown yet, show it right after checklist
+                    if (!SecurePreferences.isOemSetupShown(context)) {
+                        showOemSetup = true
+                    }
+                },
+                onOpenOemSetup = {
+                    showOemSetup = true
+                }
+            )
+        }
+        showOemSetup -> {
+            OemSetupScreen(
+                onComplete = {
+                    SecurePreferences.setOemSetupShown(context, true)
+                    showOemSetup = false
+                }
+            )
+        }
+        !isLoggedIn -> {
+            LoginFlow(
+                viewModel = viewModel,
+                loginState = loginState
+            )
+        }
+        else -> {
+            AppContent(
+                viewModel = viewModel,
+                contacts = contacts,
+                settingsState = settingsState,
+                onLogout = {
+                    ProtectionService.stop(context)
+                    viewModel.logout()
+                    isLoggedIn = false
+                },
+                onRecheckSetup = {
+                    showPermissionsChecklist = true
+                }
+            )
+        }
     }
 }
 
@@ -291,7 +340,8 @@ fun AppContent(
     viewModel: SimpleMainViewModel,
     contacts: List<EmergencyContact>,
     settingsState: SettingsState,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    onRecheckSetup: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -299,24 +349,9 @@ fun AppContent(
 
     var showGuardians by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
-    var showBatteryDialog by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        if (!BatteryOptimizationHelper.isOptimizationDisabled(context)) {
-            kotlinx.coroutines.delay(1000)
-            showBatteryDialog = true
-        }
-    }
 
     Scaffold(topBar = { AppHeader() }) { paddingValues ->
         Box(modifier = Modifier.padding(paddingValues)) {
-            if (showBatteryDialog) {
-                BatteryOptimizationDialog(
-                    onDismiss = { showBatteryDialog = false },
-                    onConfirm = { showBatteryDialog = false }
-                )
-            }
-
             when {
                 showGuardians -> {
                     BackHandler { showGuardians = false }
@@ -343,6 +378,10 @@ fun AppContent(
                         onManualSosDelayChange = { viewModel.updateManualSosDelay(it) },
                         iAmSafeEnabled = settingsState.iAmSafeEnabled,
                         onIAmSafeEnabledChange = { viewModel.updateIAmSafeEnabled(it) },
+                        onRecheckSetup = {
+                            showSettings = false
+                            onRecheckSetup()
+                        },
                         onLogout = onLogout
                     )
                 }
