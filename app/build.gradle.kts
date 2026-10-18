@@ -113,6 +113,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 
+    // Location Services for Phase 4 FusedLocationProviderClient
+    implementation("com.google.android.gms:play-services-location:21.0.1")
+
     // Security - Encrypted SharedPreferences
     // SEC-02 FIX: Upgraded to stable release from alpha
     implementation("androidx.security:security-crypto:1.0.0")

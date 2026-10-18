@@ -245,9 +245,15 @@ class SimpleMainViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             _sosStatus.value = SosStatus.Sending(0, currentContacts.size)
-            val sosManager = com.womensafety.app.SOSManager(getApplication())
+            val context = getApplication<Application>()
+            val locationHelper = com.womensafety.app.util.LocationHelper(context)
+            val locationResult = locationHelper.getBestLocation(timeoutMs = 4000L)
+            val locationStr = locationResult.toDisplayString()
+
+            val sosManager = com.womensafety.app.SOSManager(context)
             sosManager.sendSosAlerts(
                 contacts = currentContacts,
+                userLocation = locationStr,
                 senderPhoneNumber = _settingsState.value.userPhoneNumber,
                 onProgress = { sent, total ->
                     _sosStatus.value = SosStatus.Sending(sent, total)
@@ -255,6 +261,9 @@ class SimpleMainViewModel(application: Application) : AndroidViewModel(applicati
                 onComplete = { sent, total ->
                     _sosStatus.value = if (sent == 0) SosStatus.Failed(total)
                                        else SosStatus.Done(sent, total)
+                    if (sent > 0) {
+                        com.womensafety.app.service.ProtectionService.startSosFollowUp(context)
+                    }
                 }
             )
         }
@@ -262,6 +271,7 @@ class SimpleMainViewModel(application: Application) : AndroidViewModel(applicati
 
     fun cancelSOS() {
         _sosStatus.value = SosStatus.Idle
+        com.womensafety.app.service.ProtectionService.stopSosFollowUp(getApplication())
     }
 
     // ── Settings ───────────────────────────────────────────────────────────────

@@ -130,21 +130,31 @@ class SOSManager(private val context: Context) {
         return true
     }
 
-    private fun buildSosMessage(
+    fun buildSosMessage(
         contactName: String,
         location: String,
         senderPhoneNumber: String,
         timeStamp: String
     ): String {
-        val senderInfo = senderPhoneNumber.ifBlank { "Unknown" }
+        val senderInfo = senderPhoneNumber.ifBlank { "User" }
         val locationPart = if (location.isNotEmpty()) {
-            "Live location: $location (accuracy noted, $timeStamp). "
+            "Live location: $location. "
         } else {
-            "Location not available yet — follow-up will be sent. ($timeStamp). "
+            ""
         }
         return "$SOS_PREFIX EMERGENCY! This is an automatic SOS from $senderInfo. " +
-               "She is in danger and needs help. $locationPart" +
-               "Call her now."
+               "She is in danger and needs help. ${locationPart}Call her now."
+    }
+
+    /**
+     * Follow-up SOS message containing updated location.
+     */
+    fun buildFollowUpSosMessage(
+        senderPhoneNumber: String,
+        location: String
+    ): String {
+        val senderInfo = senderPhoneNumber.ifBlank { "User" }
+        return "$SOS_PREFIX UPDATE from $senderInfo: Current location: $location"
     }
 
     /** Build an [NSAFE] safe confirmation message. */

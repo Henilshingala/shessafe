@@ -117,11 +117,11 @@
             </intent-filter>
         </receiver>
 
-        <!-- Protection foreground service (monitors SMS/calls in background) -->
+        <!-- Protection foreground service (monitors SMS/calls in background, tracks SOS follow-up location) -->
         <service
             android:name=".service.ProtectionService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="location|specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Women safety monitoring: background protection service" />
