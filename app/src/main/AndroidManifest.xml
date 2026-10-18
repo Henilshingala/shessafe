@@ -117,6 +117,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Call detection receiver for I am safe automatic SMS reply on incoming guardian call -->
+        <receiver
+            android:name=".receiver.CallDetectionReceiver"
+            android:exported="true"
+            android:permission="android.permission.READ_PHONE_STATE">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+
         <!-- Protection foreground service (monitors SMS/calls in background, tracks SOS follow-up location) -->
         <service
             android:name=".service.ProtectionService"
