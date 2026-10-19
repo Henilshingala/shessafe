@@ -163,7 +163,7 @@ fun GuardianItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(contact.name, style = MaterialTheme.typography.titleSmall,
                      fontWeight = FontWeight.Medium)
-                Text(PhoneUtil.toDisplayFormat(contact.phoneNumber),
+                Text(PhoneUtil.maskPhoneNumber(contact.phoneNumber),
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
