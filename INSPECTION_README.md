@@ -659,3 +659,27 @@ While the core Compose UI is cleanly written and the application correctly lever
 3. **Fix Phone Number Retrieval in `SOSBroadcastReceiver.kt#L36`:** Connect it to `SecurePreferences` so emergency alerts contain the user's actual phone number.
 4. **Remove Unused Permissions from Manifest:** Remove `CALL_PHONE` and `SCHEDULE_EXACT_ALARM` from `app/src/main/AndroidManifest.xml`.
 5. **Eliminate Duplicate Siren in `EmergencyAlertActivity.kt#L43`:** Remove redundant `MediaPlayer` instantiation to fix audio corruption during active alerts.
+
+
+---
+
+## 10. Audit Findings Resolution & Redesign Status (Redesign v2)
+
+All items documented in the audit above have been resolved or re-architected across the phased redesign:
+
+| Audit Finding ID / Topic | Original Issue | Status in Redesign-v2 | Resolution Detail |
+|:---|:---|:---:|:---|
+| **SEC-01 / SEC-02** (Exposed Keys) | Keystore files and passwords in plaintext in `app/build.gradle.kts` and docs | **RESOLVED** | Keystore credentials removed from code; signing config now cleanly reads from environment variables (`RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_PASSWORD`, etc.). |
+| **SEC-03** (Unencrypted Backup) | `allowBackup="true"` permitted local ADB database dumps | **RESOLVED** | Set `allowBackup="false"` in `app/src/main/AndroidManifest.xml`. |
+| **SEC-04 / SEC-05** (Plaintext Logging) | Incoming SMS bodies and phone numbers logged to Logcat | **RESOLVED** | Removed message body logging in `SOSAlertReceiver`; added `PhoneUtil.maskPhoneNumber` for UI display and logs. |
+| **SEC-06 / SEC-07** (Weak OTP RNG) | Local OTP generated with pseudo-random generator | **OBSOLETE / RESOLVED** | Contact OTP verification removed; OTP architecture migrated to `OtpProvider` interface (Firebase Phone Auth stubbed). |
+| **BUG-01** (False Negative SOS) | Emergency alerts dropped by OTP heuristic | **RESOLVED** | Messages identified unambiguously by `[NSOS]` protocol prefix. Heuristic deleted. |
+| **BUG-02** (Double Siren Conflict) | `EmergencyAlertActivity` and `SOSAlertService` both playing audio | **RESOLVED** | Audio playback consolidated solely within `SOSAlertService` / `EmergencyAlarmPlayer`. |
+| **BUG-03** (Sender Phone Disconnect) | `SOSBroadcastReceiver` queried unencrypted prefs file | **RESOLVED** | Connected to encrypted `SecurePreferences.getUserPhoneNumber`. |
+| **BUG-04** (Direct Boot Crash) | `directBootAware="true"` accessing credential-encrypted storage before unlock | **RESOLVED** | Removed `directBootAware="true"` from manifest. |
+| **BUG-05 / BUG-06** (Premature Sent Toast & Typo) | "SOS Sent" shown before radio transmission + typo `sendSOSSAlerts` | **RESOLVED** | Renamed to `sendSosAlerts`; status tracked via radio `PendingIntent` callbacks (`FLAG_IMMUTABLE`). |
+| **COMPLIANCE** (Unused Permissions) | `CALL_PHONE` and `SCHEDULE_EXACT_ALARM` declared but unused | **RESOLVED** | Removed unused permissions from manifest to satisfy Google Play policies. |
+| **ARCH-01** (Role / IoT Complexity) | Separate sender/receiver roles and fragile IoT SIM forwarding | **RESOLVED** | Single unified Home screen; IoT code, receivers, and preferences fully deleted. |
+| **ARCH-02** (GPS & Follow-up) | No GPS tracking or periodic follow-ups | **RESOLVED** | Added `LocationHelper` (FusedClient -> GPS -> Network -> last known) and 2-min follow-up loop up to 30 min in `ProtectionService`. |
+| **ARCH-03** (Guardian Auto-Reply) | No automatic responder | **RESOLVED** | `CallDetectionReceiver` auto-replies with `[NSAFE]` location SMS to calling guardians (with 2-min cooldown). |
+| **TESTING** | No unit tests | **RESOLVED** | Unit tests implemented in `PhoneUtilTest.kt` for E.164 normalization and privacy masking. |
