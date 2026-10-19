@@ -29,6 +29,8 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- DND Policy Access: Required for app to appear in Do Not Disturb / Notification Policy Access settings -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <!-- COMPLIANCE FIX: CALL_PHONE removed — was never used, instant Play Store rejection -->
     <!-- COMPLIANCE FIX: SCHEDULE_EXACT_ALARM removed — AlarmManager not used, causes rejection -->
 
