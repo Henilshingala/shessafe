@@ -80,4 +80,17 @@ object PhoneUtil {
             rawNumber
         }
     }
+
+    /**
+     * Masks phone number to prevent sensitive PII exposure in logs and shared screens.
+     * Shows country code / prefix and last 4 digits (e.g., "+91 ******3210").
+     */
+    fun maskPhoneNumber(rawNumber: String): String {
+        val digits = rawNumber.filter { it.isDigit() }
+        if (digits.length <= 4) return "****"
+        val prefix = if (rawNumber.startsWith("+")) "+" else ""
+        val last4 = digits.takeLast(4)
+        val maskedLength = (digits.length - 4).coerceAtLeast(4)
+        return "$prefix${"*".repeat(maskedLength)}$last4"
+    }
 }
